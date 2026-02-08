@@ -1,4 +1,4 @@
-// Package cmd provides the CLI commands for gmn.
+// Package cmd provides the CLI commands for g.
 // Copyright 2025 Tomohiro Owada
 // SPDX-License-Identifier: Apache-2.0
 package cmd
@@ -9,21 +9,23 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/chzyer/readline"
+	"github.com/k-sub1995/g/internal/agent"
+	"github.com/k-sub1995/g/internal/api"
+	"github.com/k-sub1995/g/internal/auth"
+	"github.com/k-sub1995/g/internal/config"
+	"github.com/k-sub1995/g/internal/extension"
+	"github.com/k-sub1995/g/internal/input"
+	"github.com/k-sub1995/g/internal/mcp"
+	"github.com/k-sub1995/g/internal/output"
+	"github.com/k-sub1995/g/internal/prompt"
+	"github.com/k-sub1995/g/internal/tools"
 	"github.com/spf13/cobra"
-	"github.com/tomohiro-owada/gmn/internal/agent"
-	"github.com/tomohiro-owada/gmn/internal/api"
-	"github.com/tomohiro-owada/gmn/internal/auth"
-	"github.com/tomohiro-owada/gmn/internal/config"
-	"github.com/tomohiro-owada/gmn/internal/extension"
-	"github.com/tomohiro-owada/gmn/internal/input"
-	"github.com/tomohiro-owada/gmn/internal/mcp"
-	"github.com/tomohiro-owada/gmn/internal/output"
-	"github.com/tomohiro-owada/gmn/internal/prompt"
-	"github.com/tomohiro-owada/gmn/internal/tools"
 )
 
 var (
@@ -44,21 +46,21 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "gmn [prompt]",
+	Use:   "g [prompt]",
 	Short: "A lightweight, non-interactive Gemini CLI",
-	Long: `gmn is a lightweight reimplementation of Google's Gemini CLI
-focused on non-interactive use cases. It reuses authentication from
+	Long: `g is a lightweight reimplementation of Google's Gemini CLI
+focused on non-interactive and TUI use cases. It reuses authentication from
 the official Gemini CLI (~/.gemini/).
 
 Examples:
-  gmn "Hello, world"
-  gmn "Explain Go generics" -m gemini-2.5-pro
-  cat file.go | gmn "Review this code"
-  gmn "Add error handling" -f main.go
-  gmn "Fix the tests" --yolo`,
-	RunE:    run,
-	Version: version,
-	Args:    cobra.MaximumNArgs(1),
+  g "Hello, world"
+  g "Explain Go generics" -m gemini-2.5-pro
+  cat file.go | g "Review this code"
+  g "Add error handling" -f main.go
+  g "Fix the tests" --yolo`,
+	RunE: run,
+
+	Args: cobra.MaximumNArgs(1),
 }
 
 func init() {
@@ -84,7 +86,7 @@ func Execute() error {
 // SetVersion sets the version string
 func SetVersion(v string) {
 	version = v
-	rootCmd.Version = v
+	// No need to set rootCmd.Version directly here, as we'll use a dedicated version command.
 }
 
 func run(cmd *cobra.Command, args []string) error {
@@ -93,7 +95,11 @@ func run(cmd *cobra.Command, args []string) error {
 		prompt_ = args[0]
 	}
 	// Setup context with timeout and signal handling
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// Note: In REPL mode, this timeout applies to the GLOBAL session, which might not be what we want.
+	// We might want to use background context for REPL and timeout per turn.
+	// For now, let's keep it simple and use a long timeout or background for REPL main loop.
+
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	sigCh := make(chan os.Signal, 1)
@@ -154,88 +160,220 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if inputText == "" {
+	// Determine mode: REPL if no input and no files provided
+	isREPL := inputText == "" && len(files) == 0
+
+	if !isREPL && inputText == "" {
 		err := fmt.Errorf("no input provided")
 		formatter.WriteError(err)
 		return err
 	}
 
-	// Create API client
-	httpClient := authMgr.HTTPClient(creds)
-	apiClient := api.NewClient(httpClient)
+	// State for lazy initialization
+	var (
+		apiClient  *api.Client
+		projectID  string
+		agentLoop  *agent.Loop
+		mcpClients agent.MCPClients
+		registry   *tools.Registry
+		isInit     bool
+		req        *api.GenerateRequest
+	)
 
-	// Try to load cached project ID first
-	cachedState, _ := config.LoadCachedState()
-	projectID := cachedState.ProjectID
+	// Lazy initialization function
+	initialize := func(ctx context.Context) error {
+		if isInit {
+			return nil // Already initialized
+		}
 
-	// If no cached project ID, fetch from API
-	if projectID == "" {
 		if debug {
-			fmt.Fprintln(os.Stderr, "Loading Code Assist status...")
+			fmt.Fprintln(os.Stderr, "Initializing backend...")
 		}
-		loadResp, err := apiClient.LoadCodeAssist(ctx)
-		if err != nil {
-			formatter.WriteError(fmt.Errorf("failed to load Code Assist: %w", err))
-			return err
-		}
-		projectID = loadResp.CloudAICompanionProject
 
-		// Upstream ref: f4e73191d - fix tier eligibility for unlicensed users
+		// Create API client
+		httpClient := authMgr.HTTPClient(creds)
+		apiClient = api.NewClient(httpClient)
+
+		// Try to load cached project ID first
+		cachedState, _ := config.LoadCachedState()
+		projectID = cachedState.ProjectID
+
+		// If no cached project ID, fetch from API
 		if projectID == "" {
-			if len(loadResp.IneligibleTiers) > 0 {
-				var reasons []string
-				for _, tier := range loadResp.IneligibleTiers {
-					if tier.ReasonMessage != "" {
-						reasons = append(reasons, tier.ReasonMessage)
+			if debug {
+				fmt.Fprintln(os.Stderr, "Loading Code Assist status...")
+			}
+			loadResp, err := apiClient.LoadCodeAssist(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to load Code Assist: %w", err)
+			}
+			projectID = loadResp.CloudAICompanionProject
+
+			if projectID == "" {
+				if len(loadResp.IneligibleTiers) > 0 {
+					var reasons []string
+					for _, tier := range loadResp.IneligibleTiers {
+						if tier.ReasonMessage != "" {
+							reasons = append(reasons, tier.ReasonMessage)
+						}
+					}
+					if len(reasons) > 0 {
+						return fmt.Errorf("unable to use Gemini: %s", strings.Join(reasons, ", "))
 					}
 				}
-				if len(reasons) > 0 {
-					errMsg := fmt.Errorf("unable to use Gemini: %s", strings.Join(reasons, ", "))
-					formatter.WriteError(errMsg)
-					return errMsg
+				return fmt.Errorf("unable to use Gemini: no project ID available. Please run 'gemini' to set up your account")
+			}
+
+			// Cache the project ID
+			userTier := ""
+			if loadResp.CurrentTier != nil {
+				userTier = loadResp.CurrentTier.ID
+			}
+			_ = config.SaveCachedState(&config.CachedState{
+				ProjectID: projectID,
+				UserTier:  userTier,
+			})
+			if debug {
+				fmt.Fprintf(os.Stderr, "Project ID: %s (cached)\n", projectID)
+			}
+		} else if debug {
+			fmt.Fprintf(os.Stderr, "Using cached Project ID: %s\n", projectID)
+		}
+
+		// --- Agent Setup ---
+		if !noAgent {
+			// Web search callback
+			webSearchFn := func(ctx context.Context, query string) (string, []tools.WebSource, error) {
+				resp, err := apiClient.WebSearch(ctx, projectID, model, query)
+				if err != nil {
+					return "", nil, err
+				}
+				var text string
+				var sources []tools.WebSource
+				if len(resp.Response.Candidates) > 0 {
+					cand := resp.Response.Candidates[0]
+					for _, part := range cand.Content.Parts {
+						text += part.Text
+					}
+					if cand.GroundingMetadata != nil {
+						for _, chunk := range cand.GroundingMetadata.GroundingChunks {
+							if chunk.Web != nil {
+								sources = append(sources, tools.WebSource{
+									Title: chunk.Web.Title,
+									URI:   chunk.Web.URI,
+								})
+							}
+						}
+					}
+				}
+				return text, sources, nil
+			}
+
+			// Get working directory for extensions
+			workDir, _ := os.Getwd()
+
+			// Load extensions
+			extensions, extErr := extension.LoadAll(workDir)
+			if extErr != nil && debug {
+				fmt.Fprintf(os.Stderr, "[ext] failed to load extensions: %v\n", extErr)
+			}
+			if cfg != nil {
+				for _, ext := range extensions {
+					for serverName, serverCfg := range ext.MCPServers {
+						if _, exists := cfg.MCPServers[serverName]; !exists {
+							cfg.MCPServers[serverName] = serverCfg
+						}
+					}
 				}
 			}
-			errMsg := fmt.Errorf("unable to use Gemini: no project ID available. Please run 'gemini' to set up your account")
-			formatter.WriteError(errMsg)
-			return errMsg
-		}
 
-		// Cache the project ID for next time
-		userTier := ""
-		if loadResp.CurrentTier != nil {
-			userTier = loadResp.CurrentTier.ID
-		}
-		_ = config.SaveCachedState(&config.CachedState{
-			ProjectID: projectID,
-			UserTier:  userTier,
-		})
+			// Registry
+			registry = tools.NewRegistry(tools.RegistryOptions{
+				WorkDir:     workDir,
+				AutoApprove: yolo,
+				Sandbox:     sandbox,
+				Debug:       debug,
+				WebSearch:   webSearchFn,
+			})
 
-		if debug {
-			fmt.Fprintf(os.Stderr, "Project ID: %s (cached)\n", projectID)
-			if loadResp.CurrentTier != nil {
-				fmt.Fprintf(os.Stderr, "Tier: %s\n", loadResp.CurrentTier.ID)
+			// MCP Clients
+			mcpClients = make(agent.MCPClients)
+			var mcpDecls []api.FunctionDecl
+
+			if cfg != nil {
+				for serverName, serverCfg := range cfg.MCPServers {
+					if serverCfg.Command == "" {
+						continue
+					}
+					client, err := mcp.NewClient(serverCfg.Command, serverCfg.Args, serverCfg.Env, serverCfg.CWD)
+					if err != nil {
+						if debug {
+							fmt.Fprintf(os.Stderr, "[mcp] failed to create client for %s: %v\n", serverName, err)
+						}
+						continue
+					}
+					if err := client.Initialize(ctx); err != nil {
+						if debug {
+							fmt.Fprintf(os.Stderr, "[mcp] failed to initialize %s: %v\n", serverName, err)
+						}
+						client.Close()
+						continue
+					}
+					mcpClients[serverName] = client
+					// We can't defer close here easily, so we rely on process exit or explicit close if we add shutdown logic
+
+					for _, tool := range client.Tools {
+						prefixedName := serverName + "__" + tool.Name
+						registry.RegisterMCPTool(serverName, prefixedName)
+						mcpDecls = append(mcpDecls, api.FunctionDecl{
+							Name:        prefixedName,
+							Description: tool.Description,
+							Parameters:  json.RawMessage(tool.InputSchema),
+						})
+					}
+				}
 			}
+
+			// Extension contexts
+			var extContextFiles []string
+			for _, ext := range extensions {
+				extContextFiles = append(extContextFiles, ext.ContextFiles...)
+			}
+
+			// System Instruction
+			req.Request.SystemInstruction = prompt.BuildSystemInstruction(prompt.Options{
+				WorkDir:           workDir,
+				ExtensionContexts: extContextFiles,
+			})
+
+			// Tools
+			allDecls := registry.AllDeclarations()
+			allDecls = append(allDecls, mcpDecls...)
+			req.Request.Tools = []api.Tool{{FunctionDeclarations: allDecls}}
+
+			// Agent Loop
+			streaming := outputFormat != "json"
+			agentLoop = agent.NewLoop(apiClient, registry, mcpClients, formatter, agent.Config{
+				MaxTurns:  maxTurns,
+				Streaming: streaming,
+				Debug:     debug,
+			})
 		}
-	} else if debug {
-		fmt.Fprintf(os.Stderr, "Using cached Project ID: %s\n", projectID)
+
+		isInit = true
+		return nil
 	}
 
 	// Generate a simple user prompt ID
-	userPromptID := fmt.Sprintf("gmn-%d", time.Now().UnixNano())
+	userPromptID := fmt.Sprintf("g-%d", time.Now().UnixNano())
 
-	// Get working directory
-	workDir, _ := os.Getwd()
-
-	// Build request (Code Assist API format)
-	req := &api.GenerateRequest{
+	// Build base request
+	req = &api.GenerateRequest{
 		Model:        model,
-		Project:      projectID,
+		Project:      "", // Filled in initialize
 		UserPromptID: userPromptID,
 		Request: api.InnerRequest{
-			Contents: []api.Content{{
-				Role:  "user",
-				Parts: []api.Part{{Text: inputText}},
-			}},
+			Contents: []api.Content{}, // populated later
 			Config: api.GenerationConfig{
 				Temperature:     1.0,
 				TopP:            0.95,
@@ -244,151 +382,118 @@ func run(cmd *cobra.Command, args []string) error {
 		},
 	}
 
-	// --- Agent mode ---
-	if !noAgent {
-		// Create web search callback
-		webSearchFn := func(ctx context.Context, query string) (string, []tools.WebSource, error) {
-			resp, err := apiClient.WebSearch(ctx, projectID, model, query)
-			if err != nil {
-				return "", nil, err
+	// Execution Logic
+	runTurn := func(ctx context.Context) error {
+		// Ensure initialized
+		if !isInit {
+			if err := initialize(ctx); err != nil {
+				return err
 			}
-			// Extract text from response
-			var text string
-			var sources []tools.WebSource
-			if len(resp.Response.Candidates) > 0 {
-				cand := resp.Response.Candidates[0]
-				for _, part := range cand.Content.Parts {
-					text += part.Text
-				}
-				// Extract grounding sources
-				if cand.GroundingMetadata != nil {
-					for _, chunk := range cand.GroundingMetadata.GroundingChunks {
-						if chunk.Web != nil {
-							sources = append(sources, tools.WebSource{
-								Title: chunk.Web.Title,
-								URI:   chunk.Web.URI,
-							})
-						}
-					}
-				}
-			}
-			return text, sources, nil
+			// Update project ID in request
+			req.Project = projectID
 		}
 
-		// Load extensions and merge MCP servers
-		extensions, extErr := extension.LoadAll(workDir)
-		if extErr != nil && debug {
-			fmt.Fprintf(os.Stderr, "[ext] failed to load extensions: %v\n", extErr)
+		if !noAgent {
+			return agentLoop.Run(ctx, req)
 		}
-		if cfg != nil {
-			for _, ext := range extensions {
-				for serverName, serverCfg := range ext.MCPServers {
-					if _, exists := cfg.MCPServers[serverName]; !exists {
-						cfg.MCPServers[serverName] = serverCfg
-						if debug {
-							fmt.Fprintf(os.Stderr, "[ext] loaded MCP server %q from extension %q\n", serverName, ext.Name)
-						}
-					} else if debug {
-						fmt.Fprintf(os.Stderr, "[ext] MCP server %q from extension %q skipped (already configured)\n", serverName, ext.Name)
-					}
-				}
+
+		// Legacy mode
+		switch outputFormat {
+		case "json":
+			return runNonStreaming(ctx, apiClient, req, formatter)
+		default:
+			return runStreaming(ctx, apiClient, req, formatter)
+		}
+	}
+
+	if isREPL {
+		// Check home directory warning
+		homeDir, err := os.UserHomeDir()
+		if err == nil {
+			cwd, _ := os.Getwd()
+			if cwd == homeDir {
+				// Use yellow color logic if possible, or just plain text
+				fmt.Fprintln(os.Stderr, "Warning: you are running Gemini CLI in your home directory.")
+				fmt.Fprintln(os.Stderr, "This warning can be disabled in (not implemented)")
+				fmt.Fprintln(os.Stderr, "")
 			}
 		}
 
-		// Create tool registry
-		registry := tools.NewRegistry(tools.RegistryOptions{
-			WorkDir:     workDir,
-			AutoApprove: yolo,
-			Sandbox:     sandbox,
-			Debug:       debug,
-			WebSearch:   webSearchFn,
+		// File count message
+		if len(files) > 0 {
+			fileLabel := "file"
+			if len(files) > 1 {
+				fileLabel = "files"
+			}
+			fmt.Fprintf(os.Stderr, "%d %s\n\n", len(files), fileLabel)
+		}
+
+		// use readline
+		rl, err := readline.NewEx(&readline.Config{
+			Prompt:          "> ",
+			HistoryFile:     filepath.Join(os.TempDir(), "gmn_history"),
+			InterruptPrompt: "^C",
+			EOFPrompt:       "exit",
 		})
-
-		// Initialize MCP clients and register tools
-		mcpClients := make(agent.MCPClients)
-		var mcpDecls []api.FunctionDecl
-
-		if cfg != nil {
-			for serverName, serverCfg := range cfg.MCPServers {
-				if serverCfg.Command == "" {
-					continue // Skip HTTP/SSE (not yet supported)
-				}
-				client, err := mcp.NewClient(serverCfg.Command, serverCfg.Args, serverCfg.Env, serverCfg.CWD)
-				if err != nil {
-					if debug {
-						fmt.Fprintf(os.Stderr, "[mcp] failed to create client for %s: %v\n", serverName, err)
-					}
-					continue
-				}
-				if err := client.Initialize(ctx); err != nil {
-					if debug {
-						fmt.Fprintf(os.Stderr, "[mcp] failed to initialize %s: %v\n", serverName, err)
-					}
-					client.Close()
-					continue
-				}
-				mcpClients[serverName] = client
-				defer client.Close()
-
-				for _, tool := range client.Tools {
-					prefixedName := serverName + "__" + tool.Name
-					registry.RegisterMCPTool(serverName, prefixedName)
-					mcpDecls = append(mcpDecls, api.FunctionDecl{
-						Name:        prefixedName,
-						Description: tool.Description,
-						Parameters:  json.RawMessage(tool.InputSchema),
-					})
-					if debug {
-						fmt.Fprintf(os.Stderr, "[mcp] registered tool: %s\n", prefixedName)
-					}
-				}
-			}
-		}
-
-		// Collect extension context files
-		var extContextFiles []string
-		for _, ext := range extensions {
-			extContextFiles = append(extContextFiles, ext.ContextFiles...)
-		}
-
-		// Set system instruction
-		req.Request.SystemInstruction = prompt.BuildSystemInstruction(prompt.Options{
-			WorkDir:           workDir,
-			ExtensionContexts: extContextFiles,
-		})
-
-		// Set tools
-		allDecls := registry.AllDeclarations()
-		allDecls = append(allDecls, mcpDecls...)
-		req.Request.Tools = []api.Tool{{FunctionDeclarations: allDecls}}
-
-		if debug {
-			fmt.Fprintf(os.Stderr, "[agent] %d built-in tools, %d MCP tools registered\n",
-				len(registry.AllDeclarations()), len(mcpDecls))
-		}
-
-		// Run agent loop
-		streaming := outputFormat != "json"
-		loop := agent.NewLoop(apiClient, registry, mcpClients, formatter, agent.Config{
-			MaxTurns:  maxTurns,
-			Streaming: streaming,
-			Debug:     debug,
-		})
-
-		if err := loop.Run(ctx, req); err != nil {
-			formatter.WriteError(err)
+		if err != nil {
 			return err
+		}
+		defer rl.Close()
+
+		// Placeholder hint (simulated)
+		// readline doesn't support placeholder text easily without prompt manipulation,
+		// but we can print a dim instruction once
+		fmt.Fprintln(os.Stderr, "\033[2mType your message or @path/to/file\033[0m")
+
+		for {
+			line, err := rl.Readline()
+			if err != nil {
+				// EOF or Ctrl+C
+				break
+			}
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			if line == "exit" || line == "quit" {
+				break
+			}
+
+			// Add user input to context
+			req.Request.Contents = append(req.Request.Contents, api.Content{
+				Role:  "user",
+				Parts: []api.Part{{Text: line}},
+			})
+
+			// Create a per-turn context with timeout
+			turnCtx, turnCancel := context.WithTimeout(context.Background(), timeout)
+			err = runTurn(turnCtx)
+			turnCancel()
+
+			if err != nil {
+				formatter.WriteError(err)
+				// Don't exit REPL on error
+			}
+
+			// Newline handled by formatter usually, but REPL might need one
+			// agent loop prints newlines
 		}
 		return nil
 	}
 
-	// --- Legacy single-turn mode (--no-agent) ---
-	switch outputFormat {
-	case "json":
-		return runNonStreaming(ctx, apiClient, req, formatter)
-	default:
-		return runStreaming(ctx, apiClient, req, formatter)
+	// Single turn mode
+	// Determine if initial input was provided via files/prompt
+	if inputText != "" {
+		req.Request.Contents = append(req.Request.Contents, api.Content{
+			Role:  "user",
+			Parts: []api.Part{{Text: inputText}},
+		})
+	} else {
+		// Fallback if no input and not isREPL (should be caught above)
+		return fmt.Errorf("no input provided")
 	}
+
+	return runTurn(ctx)
 }
 
 func runNonStreaming(ctx context.Context, client *api.Client, req *api.GenerateRequest, formatter output.Formatter) error {

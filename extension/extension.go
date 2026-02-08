@@ -12,11 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-<<<<<<< Updated upstream
-	"github.com/tomohiro-owada/gmn/internal/config"
-=======
 	"github.com/k-sub1995/g/internal/config"
->>>>>>> Stashed changes
 )
 
 // Manifest represents a gemini-extension.json file.

@@ -1,4 +1,6 @@
+// Package tools provides tool implementations used by the Gemini agent.
 // Copyright 2025 Tomohiro Owada
+// Copyright 2026 k-sub1995
 // SPDX-License-Identifier: Apache-2.0
 package tools
 
@@ -10,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tomohiro-owada/gmn/internal/api"
+	"github.com/k-sub1995/g/internal/api"
 )
 
 const (
-	webFetchTimeout  = 30 * time.Second
-	maxFetchBytes    = 512 * 1024 // 512KB
+	webFetchTimeout = 30 * time.Second
+	maxFetchBytes   = 512 * 1024 // 512KB
 )
 
 type WebFetchTool struct {

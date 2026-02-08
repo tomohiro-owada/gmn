@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tomohiro-owada/gmn/internal/config"
+	"github.com/k-sub1995/g/internal/config"
 )
 
 const (

@@ -1,11 +1,13 @@
+// Package tools provides tool implementations used by the Gemini agent.
 // Copyright 2025 Tomohiro Owada
+// Copyright 2026 k-sub1995
 // SPDX-License-Identifier: Apache-2.0
 package tools
 
 import (
 	"context"
 
-	"github.com/tomohiro-owada/gmn/internal/api"
+	"github.com/k-sub1995/g/internal/api"
 )
 
 // --- enter_plan_mode ---

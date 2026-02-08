@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tomohiro-owada/gmn/internal/api"
-	"github.com/tomohiro-owada/gmn/internal/mcp"
-	"github.com/tomohiro-owada/gmn/internal/output"
-	"github.com/tomohiro-owada/gmn/internal/tools"
+	"github.com/k-sub1995/g/internal/api"
+	"github.com/k-sub1995/g/internal/mcp"
+	"github.com/k-sub1995/g/internal/output"
+	"github.com/k-sub1995/g/internal/tools"
 )
 
 // SyntheticThoughtSignature is used when a FunctionCall part lacks a thoughtSignature.
@@ -76,14 +76,20 @@ func (l *Loop) Run(ctx context.Context, req *api.GenerateRequest) error {
 			}
 		}
 
+		// Preserve thoughtSignature on all parts
+		modelParts = ensureThoughtSignatures(modelParts)
+
 		// Step 3: If no function calls, we're done
 		if len(functionCalls) == 0 {
+			// Append the model's response to conversation history so it's preserved for future turns
+			req.Request.Contents = append(req.Request.Contents, api.Content{
+				Role:  "model",
+				Parts: modelParts,
+			})
 			return nil
 		}
 
 		// Step 4: Append the model's response to conversation history
-		// Preserve thoughtSignature on all parts
-		modelParts = ensureThoughtSignatures(modelParts)
 		req.Request.Contents = append(req.Request.Contents, api.Content{
 			Role:  "model",
 			Parts: modelParts,
@@ -283,4 +289,3 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "..."
 }
-

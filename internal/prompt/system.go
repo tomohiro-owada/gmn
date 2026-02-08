@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tomohiro-owada/gmn/internal/api"
+	"github.com/k-sub1995/g/internal/api"
 )
 
 // Options configures system prompt generation.

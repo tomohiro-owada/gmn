@@ -1,4 +1,4 @@
-// MCP command for gmn
+// Package cmd provides MCP command for g.
 // Copyright 2025 Tomohiro Owada
 // SPDX-License-Identifier: Apache-2.0
 package cmd
@@ -10,15 +10,17 @@ import (
 	"os"
 	"strings"
 
+	"github.com/k-sub1995/g/internal/config"
+	"github.com/k-sub1995/g/internal/extension"
+	"github.com/k-sub1995/g/internal/mcp"
 	"github.com/spf13/cobra"
-	"github.com/tomohiro-owada/gmn/internal/config"
-	"github.com/tomohiro-owada/gmn/internal/extension"
-	"github.com/tomohiro-owada/gmn/internal/mcp"
 )
 
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
 	Short: "MCP (Model Context Protocol) commands",
+	Long: `MCP (Model Context Protocol) commands provide functionality for
+interacting with external tools and services via the Model Context Protocol.`,
 }
 
 var mcpListCmd = &cobra.Command{

@@ -1,11 +1,13 @@
+// Package tools provides tool implementations used by the Gemini agent.
 // Copyright 2025 Tomohiro Owada
+// Copyright 2026 k-sub1995
 // SPDX-License-Identifier: Apache-2.0
 package tools
 
 import (
 	"context"
 
-	"github.com/tomohiro-owada/gmn/internal/api"
+	"github.com/k-sub1995/g/internal/api"
 )
 
 type AskUserTool struct {
@@ -44,7 +46,7 @@ func (t *AskUserTool) Execute(ctx context.Context, args map[string]interface{}) 
 	// Non-interactive mode: cannot ask questions
 	return &ToolResult{
 		Content: map[string]interface{}{
-			"message": "Running in non-interactive mode. Cannot ask user questions. Please make your best judgment and proceed, or explain what you need in the output.",
+			"message":  "Running in non-interactive mode. Cannot ask user questions. Please make your best judgment and proceed, or explain what you need in the output.",
 			"question": question,
 		},
 		IsError: true,

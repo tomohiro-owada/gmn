@@ -9,7 +9,7 @@ import (
 	"io"
 
 	"github.com/acarl005/stripansi"
-	"github.com/tomohiro-owada/gmn/internal/api"
+	"github.com/k-sub1995/g/internal/api"
 )
 
 // Formatter is the interface for output formatters

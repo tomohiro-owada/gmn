@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tomohiro-owada/gmn/internal/config"
+	"github.com/k-sub1995/g/internal/config"
 )
 
 // Manifest represents a gemini-extension.json file.

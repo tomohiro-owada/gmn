@@ -1,5 +1,6 @@
-// Package tools provides built-in tool implementations for gmn.
+// Package tools provides tool implementations used by the Gemini agent.
 // Copyright 2025 Tomohiro Owada
+// Copyright 2026 k-sub1995
 // SPDX-License-Identifier: Apache-2.0
 package tools
 
@@ -8,7 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/tomohiro-owada/gmn/internal/api"
+	"github.com/k-sub1995/g/internal/api"
 )
 
 // ToolResult is the standard return value from tool execution.

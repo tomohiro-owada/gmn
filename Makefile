@@ -1,10 +1,11 @@
-# Makefile for gmn
+# Makefile for g
 # Copyright 2025 Takuto Wada
+# Copyright 2026 k-sub1995
 # SPDX-License-Identifier: Apache-2.0
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
-BINARY := gmn
+LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION) -X github.com/k-sub1995/g/cmd.version=$(VERSION)"
+BINARY := g
 BUILD_DIR := build
 
 # Platforms for cross-compilation

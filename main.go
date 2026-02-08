@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tomohiro-owada/gmn/cmd"
+	"github.com/k-sub1995/g/cmd"
 )
 
 // version is set via ldflags at build time

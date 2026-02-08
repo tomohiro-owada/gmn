@@ -1,5 +1,6 @@
-gmn
+g
 Copyright 2025 Tomohiro Owada
+Copyright 2026 k-sub1995
 
 This project is a derivative work based on Gemini CLI by Google LLC.
 https://github.com/google-gemini/gemini-cli
@@ -12,7 +13,7 @@ Licensed under the Apache License, Version 2.0
 This derivative work includes the following modifications from the original:
 
 1. Complete rewrite in Go (original was TypeScript/Node.js)
-2. Removed interactive/TUI mode - non-interactive only
+2. Supports both CLI and interactive TUI modes
 3. Simplified authentication - OAuth token reuse only (no new login flow)
 4. Retained MCP (Model Context Protocol) client support
 5. Retained ~/.gemini/settings.json compatibility

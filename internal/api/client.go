@@ -7,7 +7,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -27,13 +29,21 @@ const (
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
+	userAgent  string
 }
 
-// NewClient creates a new API client
-func NewClient(httpClient *http.Client) *Client {
+// NewClient creates a new API client.
+// The version parameter is used for the User-Agent header.
+// Upstream ref: 8979fc5f6 - propagate User-Agent header to setup-phase CodeAssist API calls
+func NewClient(httpClient *http.Client, version string) *Client {
+	ua := "gemini-cli/gmn"
+	if version != "" {
+		ua = "gemini-cli/gmn-" + version
+	}
 	return &Client{
 		httpClient: httpClient,
 		baseURL:    baseURL,
+		userAgent:  ua,
 	}
 }
 
@@ -41,11 +51,14 @@ const (
 	maxRetries       = 5
 	baseRetryDelay   = 500 * time.Millisecond
 	maxRetryDelay    = 30 * time.Second
+	maxSSLRetries    = 3
 )
 
-// doRequestWithRetry executes an HTTP request with retry on 429 (rate limit).
+// doRequestWithRetry executes an HTTP request with retry on 429 (rate limit)
+// and transient SSL/TLS errors.
 // On success (200), it returns the response with body still open.
 // The caller is responsible for closing the body.
+// Upstream ref: e3b8490ed - add retry logic for transient SSL/TLS errors
 func (c *Client) doRequestWithRetry(ctx context.Context, httpReq *http.Request, bodyBytes []byte) (*http.Response, error) {
 	var lastErr error
 	origURL := httpReq.URL.String()
@@ -64,6 +77,17 @@ func (c *Client) doRequestWithRetry(ctx context.Context, httpReq *http.Request, 
 
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
+			// Retry transient SSL/TLS errors
+			if isTransientTLSError(err) && attempt < maxSSLRetries {
+				lastErr = err
+				delay := time.Duration(float64(baseRetryDelay) * math.Pow(2, float64(attempt)))
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(delay):
+					continue
+				}
+			}
 			return nil, fmt.Errorf("failed to send request: %w", err)
 		}
 
@@ -92,6 +116,22 @@ func (c *Client) doRequestWithRetry(ctx context.Context, httpReq *http.Request, 
 	}
 
 	return nil, fmt.Errorf("rate limited after %d retries: %w", maxRetries, lastErr)
+}
+
+// isTransientTLSError checks if the error is a transient TLS error that may
+// succeed on retry (e.g. handshake failures due to network issues).
+func isTransientTLSError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var recordErr *tls.RecordHeaderError
+	if errors.As(err, &recordErr) {
+		return true
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "tls:") ||
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "EOF")
 }
 
 // retryDelay determines how long to wait before retrying a 429.
@@ -282,6 +322,7 @@ func (c *Client) Generate(ctx context.Context, req *GenerateRequest) (*GenerateR
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", c.userAgent)
 
 	resp, err := c.doRequestWithRetry(ctx, httpReq, body)
 	if err != nil {
@@ -393,6 +434,7 @@ func (c *Client) LoadCodeAssist(ctx context.Context) (*LoadCodeAssistResponse, e
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", c.userAgent)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -428,6 +470,7 @@ func (c *Client) GenerateStream(ctx context.Context, req *GenerateRequest) (<-ch
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("User-Agent", c.userAgent)
 
 	resp, err := c.doRequestWithRetry(ctx, httpReq, body)
 	if err != nil {

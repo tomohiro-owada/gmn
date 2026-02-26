@@ -63,7 +63,7 @@ Examples:
 
 func init() {
 	rootCmd.Flags().StringVarP(&prompt_, "prompt", "p", "", "Prompt to send to Gemini (required)")
-	rootCmd.Flags().StringVarP(&model, "model", "m", "gemini-2.5-flash", "Model to use")
+	rootCmd.Flags().StringVarP(&model, "model", "m", "pro", "Model to use (aliases: auto, pro, flash, flash-lite)")
 	rootCmd.Flags().StringVarP(&outputFormat, "output-format", "o", "text", "Output format: text, json, stream-json")
 	rootCmd.Flags().StringArrayVarP(&files, "file", "f", nil, "Files to include in context")
 	rootCmd.Flags().DurationVarP(&timeout, "timeout", "t", 5*time.Minute, "API timeout")
@@ -160,9 +160,17 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Resolve model alias to concrete model name
+	// Upstream ref: 61d92c4a2 - Remove previewFeatures and default to Gemini 3
+	resolvedModel := config.ResolveModel(model, false)
+	if debug && resolvedModel != model {
+		fmt.Fprintf(os.Stderr, "Model resolved: %s → %s\n", model, resolvedModel)
+	}
+	model = resolvedModel
+
 	// Create API client
 	httpClient := authMgr.HTTPClient(creds)
-	apiClient := api.NewClient(httpClient)
+	apiClient := api.NewClient(httpClient, version)
 
 	// Try to load cached project ID first
 	cachedState, _ := config.LoadCachedState()

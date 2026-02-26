@@ -55,9 +55,8 @@ type MCPServerConfig struct {
 }
 
 // GeneralConfig holds general settings
-type GeneralConfig struct {
-	PreviewFeatures bool `json:"previewFeatures"`
-}
+// Upstream ref: v0.30.0 removed previewFeatures; Gemini 3 is now default.
+type GeneralConfig struct {}
 
 // OutputConfig holds output settings
 type OutputConfig struct {
@@ -73,9 +72,7 @@ func DefaultConfig() *Config {
 			},
 		},
 		MCPServers: make(map[string]MCPServerConfig),
-		General: GeneralConfig{
-			PreviewFeatures: false,
-		},
+		General: GeneralConfig{},
 		Output: OutputConfig{
 			Format: "text",
 		},

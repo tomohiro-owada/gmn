@@ -209,8 +209,11 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 
 		// Cache the project ID for next time
-		userTier := ""
-		if loadResp.CurrentTier != nil {
+		// Upstream ref: e70978906 - fallback to STANDARD when tier ID is missing
+		userTier := "STANDARD"
+		if loadResp.PaidTier != nil && loadResp.PaidTier.ID != "" {
+			userTier = loadResp.PaidTier.ID
+		} else if loadResp.CurrentTier != nil && loadResp.CurrentTier.ID != "" {
 			userTier = loadResp.CurrentTier.ID
 		}
 		_ = config.SaveCachedState(&config.CachedState{
@@ -263,7 +266,7 @@ func run(cmd *cobra.Command, args []string) error {
 			// Extract text from response
 			var text string
 			var sources []tools.WebSource
-			if len(resp.Response.Candidates) > 0 {
+			if resp.Response != nil && len(resp.Response.Candidates) > 0 {
 				cand := resp.Response.Candidates[0]
 				for _, part := range cand.Content.Parts {
 					text += part.Text

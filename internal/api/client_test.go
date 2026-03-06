@@ -44,7 +44,7 @@ func TestUserAgentSentInRequests(t *testing.T) {
 			})
 		} else {
 			json.NewEncoder(w).Encode(GenerateResponse{
-				Response: InnerResponse{
+				Response: &InnerResponse{
 					Candidates: []Candidate{{
 						Content: Content{
 							Role:  "model",
@@ -260,7 +260,7 @@ func TestGenerateResponse_NilHandling(t *testing.T) {
 		// Return a response with empty candidates (mimics upstream converter hardening)
 		json.NewEncoder(w).Encode(GenerateResponse{
 			TraceID: "test-trace",
-			Response: InnerResponse{
+			Response: &InnerResponse{
 				Candidates: nil,
 			},
 		})
@@ -288,8 +288,10 @@ func TestGenerateResponse_NilHandling(t *testing.T) {
 	if resp.TraceID != "test-trace" {
 		t.Errorf("TraceID = %q, want %q", resp.TraceID, "test-trace")
 	}
-	// Iterating over nil candidates should be safe
-	for range resp.Response.Candidates {
-		t.Error("should not iterate over nil candidates")
+	// Iterating over nil response/candidates should be safe
+	if resp.Response != nil {
+		for range resp.Response.Candidates {
+			t.Error("should not iterate over nil candidates")
+		}
 	}
 }

@@ -99,13 +99,15 @@ func (c *Client) doRequestWithRetry(ctx context.Context, httpReq *http.Request, 
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
-		if resp.StatusCode != http.StatusTooManyRequests {
+		// Retry on 429 (rate limit), 499, and 5xx (server errors)
+		// Upstream ref: 9c2fd5a7c - add HTTP 499 to retryable errors
+		// Upstream ref: 522e95439 - apply retry logic for all users
+		if !isRetryableStatus(resp.StatusCode) {
 			return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
 		}
 
-		// 429: Rate limited — calculate retry delay
 		delay := retryDelay(respBody, resp.Header, attempt)
-		lastErr = fmt.Errorf("API error (status 429): %s", string(respBody))
+		lastErr = fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
 
 		select {
 		case <-ctx.Done():
@@ -172,6 +174,12 @@ func retryDelay(body []byte, headers http.Header, attempt int) time.Duration {
 		delay = maxRetryDelay
 	}
 	return delay
+}
+
+// isRetryableStatus returns true for HTTP status codes that should trigger a retry.
+// Upstream ref: 9c2fd5a7c - add HTTP 499 to retryable errors
+func isRetryableStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status == 499 || (status >= 500 && status < 600)
 }
 
 // parseDuration parses a duration string like "0.420051630s" or "420.05163ms".
@@ -253,15 +261,16 @@ type FunctionDecl struct {
 }
 
 // GenerateResponse is a response from generate content (Code Assist API format)
+// Upstream ref: e70978906 - handle optional response fields
 type GenerateResponse struct {
-	Response InnerResponse `json:"response"`
-	TraceID  string        `json:"traceId,omitempty"`
+	Response *InnerResponse `json:"response,omitempty"`
+	TraceID  string         `json:"traceId,omitempty"`
 }
 
 // InnerResponse is the inner response structure for Code Assist API
 type InnerResponse struct {
-	Candidates    []Candidate   `json:"candidates"`
-	UsageMetadata UsageMetadata `json:"usageMetadata"`
+	Candidates    []Candidate   `json:"candidates,omitempty"`
+	UsageMetadata UsageMetadata `json:"usageMetadata,omitempty"`
 }
 
 // Candidate represents a response candidate
@@ -392,23 +401,26 @@ type ClientMetadata struct {
 // LoadCodeAssistResponse is the response from loadCodeAssist
 type LoadCodeAssistResponse struct {
 	CurrentTier             *UserTier        `json:"currentTier,omitempty"`
+	PaidTier                *UserTier        `json:"paidTier,omitempty"`
 	AllowedTiers            []UserTier       `json:"allowedTiers,omitempty"`
 	IneligibleTiers         []IneligibleTier `json:"ineligibleTiers,omitempty"`
 	CloudAICompanionProject string           `json:"cloudaicompanionProject,omitempty"`
 }
 
 // UserTier represents a user's tier
+// Upstream ref: e70978906 - handle optional response fields
 type UserTier struct {
-	ID   string `json:"id"`
+	ID   string `json:"id,omitempty"`
 	Name string `json:"name,omitempty"`
 }
 
 // IneligibleTier represents a tier the user is not eligible for
+// Upstream ref: e70978906 - handle optional response fields from code assist API
 type IneligibleTier struct {
-	ReasonCode    string `json:"reasonCode"`
-	ReasonMessage string `json:"reasonMessage"`
-	TierID        string `json:"tierId"`
-	TierName      string `json:"tierName"`
+	ReasonCode    string `json:"reasonCode,omitempty"`
+	ReasonMessage string `json:"reasonMessage,omitempty"`
+	TierID        string `json:"tierId,omitempty"`
+	TierName      string `json:"tierName,omitempty"`
 	ValidationURL string `json:"validationUrl,omitempty"`
 }
 
@@ -455,7 +467,8 @@ func (c *Client) LoadCodeAssist(ctx context.Context) (*LoadCodeAssistResponse, e
 	return &result, nil
 }
 
-// GenerateStream sends a streaming generate request with automatic 429 retry.
+// GenerateStream sends a streaming generate request without retry.
+// Upstream ref: fdd844b40 - disable retries for code assist streaming requests
 func (c *Client) GenerateStream(ctx context.Context, req *GenerateRequest) (<-chan StreamEvent, error) {
 	endpoint := fmt.Sprintf("%s/%s:streamGenerateContent?alt=sse", c.baseURL, apiVersion)
 
@@ -472,9 +485,15 @@ func (c *Client) GenerateStream(ctx context.Context, req *GenerateRequest) (<-ch
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("User-Agent", c.userAgent)
 
-	resp, err := c.doRequestWithRetry(ctx, httpReq, body)
+	// Streaming requests do not retry to avoid duplicate partial responses
+	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
 	}
 
 	events := make(chan StreamEvent)
@@ -515,11 +534,14 @@ func (c *Client) GenerateStream(ctx context.Context, req *GenerateRequest) (<-ch
 			}
 
 			// Store usage for final event
-			if chunk.Response.UsageMetadata.TotalTokenCount > 0 {
+			if chunk.Response != nil && chunk.Response.UsageMetadata.TotalTokenCount > 0 {
 				usage = &chunk.Response.UsageMetadata
 			}
 
 			// Extract text and tool calls from candidates
+			if chunk.Response == nil {
+				continue
+			}
 			for _, candidate := range chunk.Response.Candidates {
 				if candidate.FinishReason != "" {
 					finishReason = candidate.FinishReason

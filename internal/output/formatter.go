@@ -51,7 +51,7 @@ type TextFormatter struct {
 }
 
 func (f *TextFormatter) WriteResponse(resp *api.GenerateResponse) error {
-	if len(resp.Response.Candidates) > 0 && len(resp.Response.Candidates[0].Content.Parts) > 0 {
+	if resp.Response != nil && len(resp.Response.Candidates) > 0 && len(resp.Response.Candidates[0].Content.Parts) > 0 {
 		text := sanitizeText(resp.Response.Candidates[0].Content.Parts[0].Text, f.sanitize)
 		_, err := fmt.Fprintln(f.w, text)
 		return err
@@ -117,13 +117,15 @@ type JSONError struct {
 
 func (f *JSONFormatter) WriteResponse(resp *api.GenerateResponse) error {
 	out := JSONResponse{}
-	if resp.Response.UsageMetadata.TotalTokenCount > 0 {
-		out.Usage = &resp.Response.UsageMetadata
-	}
-	if len(resp.Response.Candidates) > 0 {
-		out.FinishReason = resp.Response.Candidates[0].FinishReason
-		if len(resp.Response.Candidates[0].Content.Parts) > 0 {
-			out.Response = sanitizeText(resp.Response.Candidates[0].Content.Parts[0].Text, f.sanitize)
+	if resp.Response != nil {
+		if resp.Response.UsageMetadata.TotalTokenCount > 0 {
+			out.Usage = &resp.Response.UsageMetadata
+		}
+		if len(resp.Response.Candidates) > 0 {
+			out.FinishReason = resp.Response.Candidates[0].FinishReason
+			if len(resp.Response.Candidates[0].Content.Parts) > 0 {
+				out.Response = sanitizeText(resp.Response.Candidates[0].Content.Parts[0].Text, f.sanitize)
+			}
 		}
 	}
 

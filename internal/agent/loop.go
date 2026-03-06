@@ -222,6 +222,9 @@ func (l *Loop) callModelNonStreaming(ctx context.Context, req *api.GenerateReque
 	var parts []api.Part
 	hasFunctionCalls := false
 
+	if resp.Response == nil {
+		return nil, nil
+	}
 	for _, candidate := range resp.Response.Candidates {
 		for _, part := range candidate.Content.Parts {
 			parts = append(parts, part)

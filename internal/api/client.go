@@ -14,6 +14,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -48,10 +49,11 @@ func NewClient(httpClient *http.Client, version string) *Client {
 }
 
 const (
-	maxRetries       = 5
-	baseRetryDelay   = 500 * time.Millisecond
-	maxRetryDelay    = 30 * time.Second
-	maxSSLRetries    = 3
+	maxRetries          = 5
+	baseRetryDelay      = 500 * time.Millisecond
+	maxRetryDelay       = 30 * time.Second
+	maxSSLRetries       = 3
+	maxRetryableDelay   = 5 * time.Minute // Upstream ref: 94ab449e6 - treat long delays as terminal quota errors
 )
 
 // doRequestWithRetry executes an HTTP request with retry on 429 (rate limit)
@@ -109,6 +111,11 @@ func (c *Client) doRequestWithRetry(ctx context.Context, httpReq *http.Request, 
 		delay := retryDelay(respBody, resp.Header, attempt)
 		lastErr = fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
 
+		// Upstream ref: 94ab449e6 - treat retry delays > 5 min as terminal quota errors
+		if delay > maxRetryableDelay {
+			return nil, fmt.Errorf("quota exceeded: retry delay %v exceeds maximum (%v), try again later: %w", delay, maxRetryableDelay, lastErr)
+		}
+
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -136,6 +143,18 @@ func isTransientTLSError(err error) bool {
 		strings.Contains(errStr, "EOF")
 }
 
+// sanitizeJSON collapses duplicate commas that can appear when SSE stream
+// corruption injects stray characters into JSON error bodies.
+// Upstream ref: 936f6240d - sanitize SSE-corrupted JSON
+var duplicateCommaRe = regexp.MustCompile(`,\s*,`)
+
+func sanitizeJSON(data []byte) []byte {
+	for duplicateCommaRe.Match(data) {
+		data = duplicateCommaRe.ReplaceAll(data, []byte(","))
+	}
+	return data
+}
+
 // retryDelay determines how long to wait before retrying a 429.
 // It tries to parse retryDelay from the response body or Retry-After header,
 // falling back to exponential backoff.
@@ -147,6 +166,9 @@ func retryDelay(body []byte, headers http.Header, attempt int) time.Duration {
 		}
 	}
 
+	// Sanitize JSON before parsing to handle SSE-corrupted bodies
+	sanitized := sanitizeJSON(body)
+
 	// Try to parse retryDelay from JSON response body
 	// e.g. {"error": {..., "details": [{"retryDelay": "0.420051630s"}]}}
 	var errResp struct {
@@ -157,7 +179,7 @@ func retryDelay(body []byte, headers http.Header, attempt int) time.Duration {
 			} `json:"details"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(body, &errResp) == nil {
+	if json.Unmarshal(sanitized, &errResp) == nil {
 		for _, detail := range errResp.Error.Details {
 			if d := parseDuration(detail.RetryDelay); d > 0 {
 				return d
@@ -485,15 +507,10 @@ func (c *Client) GenerateStream(ctx context.Context, req *GenerateRequest) (<-ch
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("User-Agent", c.userAgent)
 
-	// Streaming requests do not retry to avoid duplicate partial responses
-	resp, err := c.httpClient.Do(httpReq)
+	// Retry initial connection on 429/5xx; once streaming begins, no retry.
+	resp, err := c.doRequestWithRetry(ctx, httpReq, body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
+		return nil, err
 	}
 
 	events := make(chan StreamEvent)

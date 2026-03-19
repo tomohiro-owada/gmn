@@ -162,7 +162,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Resolve model alias to concrete model name
 	// Upstream ref: 61d92c4a2 - Remove previewFeatures and default to Gemini 3
-	resolvedModel := config.ResolveModel(model, false)
+	resolvedModel := config.ResolveModel(model, false, true)
 	if debug && resolvedModel != model {
 		fmt.Fprintf(os.Stderr, "Model resolved: %s → %s\n", model, resolvedModel)
 	}
@@ -343,11 +343,11 @@ func run(cmd *cobra.Command, args []string) error {
 
 				for _, tool := range client.Tools {
 					prefixedName := serverName + "__" + tool.Name
-					registry.RegisterMCPTool(serverName, prefixedName)
+					registry.RegisterMCPTool(serverName, prefixedName, tool.Name)
 					mcpDecls = append(mcpDecls, api.FunctionDecl{
 						Name:        prefixedName,
 						Description: tool.Description,
-						Parameters:  json.RawMessage(tool.InputSchema),
+						Parameters:  sanitizeSchema(tool.InputSchema),
 					})
 					if debug {
 						fmt.Fprintf(os.Stderr, "[mcp] registered tool: %s\n", prefixedName)
@@ -429,4 +429,23 @@ func runStreaming(ctx context.Context, client *api.Client, req *api.GenerateRequ
 	}
 
 	return nil
+}
+
+// sanitizeSchema removes fields from MCP tool inputSchema that the Gemini API
+// does not accept (e.g. "$schema"). The upstream Gemini CLI performs equivalent
+// sanitization in its converter layer.
+func sanitizeSchema(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var schema map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return raw
+	}
+	delete(schema, "$schema")
+	sanitized, err := json.Marshal(schema)
+	if err != nil {
+		return raw
+	}
+	return sanitized
 }

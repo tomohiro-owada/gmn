@@ -92,8 +92,10 @@ func (r *Registry) registerBuiltins(opts RegistryOptions) {
 }
 
 // RegisterMCPTool adds an MCP-backed tool to the registry.
-func (r *Registry) RegisterMCPTool(serverName, toolName string) {
-	r.mcp[toolName] = MCPToolRef{ServerName: serverName, ToolName: toolName}
+// prefixedName is the qualified name (e.g. "server__toolName") used as the API-facing key.
+// originalName is the tool's original name on the MCP server.
+func (r *Registry) RegisterMCPTool(serverName, prefixedName, originalName string) {
+	r.mcp[prefixedName] = MCPToolRef{ServerName: serverName, ToolName: originalName}
 }
 
 // Get returns a built-in tool by name.

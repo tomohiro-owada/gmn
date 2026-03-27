@@ -431,9 +431,11 @@ type LoadCodeAssistResponse struct {
 
 // UserTier represents a user's tier
 // Upstream ref: e70978906 - handle optional response fields
+// Upstream ref: v0.35.2 setup.ts - added HasOnboardedPreviously
 type UserTier struct {
-	ID   string `json:"id,omitempty"`
-	Name string `json:"name,omitempty"`
+	ID                    string `json:"id,omitempty"`
+	Name                  string `json:"name,omitempty"`
+	HasOnboardedPreviously *bool  `json:"hasOnboardedPreviously,omitempty"`
 }
 
 // IneligibleTier represents a tier the user is not eligible for

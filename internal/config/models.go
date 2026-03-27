@@ -1,5 +1,5 @@
 // Package config provides model constants and resolution logic.
-// Ported from upstream packages/core/src/config/models.ts (v0.34.0)
+// Ported from upstream packages/core/src/config/models.ts (v0.35.2)
 // Copyright 2025 Google LLC
 // Copyright 2025 Tomohiro Owada
 // SPDX-License-Identifier: Apache-2.0
@@ -7,7 +7,7 @@ package config
 
 import "strings"
 
-// Model constants matching upstream Gemini CLI v0.34.0
+// Model constants matching upstream Gemini CLI v0.35.2
 const (
 	PreviewGeminiModel              = "gemini-3-pro-preview"
 	PreviewGemini31Model            = "gemini-3.1-pro-preview"
@@ -41,7 +41,7 @@ var ValidGeminiModels = map[string]bool{
 
 // ResolveModel resolves a model alias to a concrete model name.
 // When hasAccessToPreview is false, preview models are downgraded to stable 2.5 equivalents.
-// Upstream ref: packages/core/src/config/models.ts resolveModel() (v0.34.0)
+// Upstream ref: packages/core/src/config/models.ts resolveModel() (v0.35.2)
 func ResolveModel(requestedModel string, useGemini31 bool, hasAccessToPreview bool) string {
 	var resolved string
 	switch requestedModel {

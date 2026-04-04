@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 const (
@@ -18,10 +19,11 @@ const (
 
 // Config is the main configuration structure
 type Config struct {
-	Security   SecurityConfig             `json:"security"`
-	MCPServers map[string]MCPServerConfig `json:"mcpServers"`
-	General    GeneralConfig              `json:"general"`
-	Output     OutputConfig               `json:"output"`
+	Security           SecurityConfig                     `json:"security"`
+	MCPServers         map[string]MCPServerConfig         `json:"mcpServers"`
+	RequiredMCPServers map[string]RequiredMCPServerConfig `json:"requiredMcpServers,omitempty"`
+	General            GeneralConfig                      `json:"general"`
+	Output             OutputConfig                       `json:"output"`
 }
 
 // SecurityConfig holds security-related settings
@@ -50,13 +52,44 @@ type MCPServerConfig struct {
 	// Common
 	Timeout      int      `json:"timeout,omitempty"`
 	Trust        bool     `json:"trust,omitempty"`
+	Description  string   `json:"description,omitempty"`
 	IncludeTools []string `json:"includeTools,omitempty"`
 	ExcludeTools []string `json:"excludeTools,omitempty"`
+
+	// Auth and routing metadata for compatibility with newer Gemini CLI config.
+	AuthProviderType     string          `json:"authProviderType,omitempty"`
+	OAuth                *MCPOAuthConfig `json:"oauth,omitempty"`
+	TargetAudience       string          `json:"targetAudience,omitempty"`
+	TargetServiceAccount string          `json:"targetServiceAccount,omitempty"`
+}
+
+// MCPOAuthConfig holds optional OAuth configuration for HTTP/SSE MCP servers.
+type MCPOAuthConfig struct {
+	Scopes       []string `json:"scopes,omitempty"`
+	ClientID     string   `json:"clientId,omitempty"`
+	ClientSecret string   `json:"clientSecret,omitempty"`
+}
+
+// RequiredMCPServerConfig matches newer Gemini CLI requiredMcpServers entries.
+// It is separate from MCPServerConfig so omitted fields can have different defaults.
+type RequiredMCPServerConfig struct {
+	URL                  string            `json:"url,omitempty"`
+	Type                 string            `json:"type,omitempty"`
+	Headers              map[string]string `json:"headers,omitempty"`
+	Timeout              int               `json:"timeout,omitempty"`
+	Trust                *bool             `json:"trust,omitempty"`
+	Description          string            `json:"description,omitempty"`
+	IncludeTools         []string          `json:"includeTools,omitempty"`
+	ExcludeTools         []string          `json:"excludeTools,omitempty"`
+	AuthProviderType     string            `json:"authProviderType,omitempty"`
+	OAuth                *MCPOAuthConfig   `json:"oauth,omitempty"`
+	TargetAudience       string            `json:"targetAudience,omitempty"`
+	TargetServiceAccount string            `json:"targetServiceAccount,omitempty"`
 }
 
 // GeneralConfig holds general settings
 // Upstream ref: v0.30.0 removed previewFeatures; Gemini 3 is now default.
-type GeneralConfig struct {}
+type GeneralConfig struct{}
 
 // OutputConfig holds output settings
 type OutputConfig struct {
@@ -71,8 +104,9 @@ func DefaultConfig() *Config {
 				SelectedType: "oauth-personal",
 			},
 		},
-		MCPServers: make(map[string]MCPServerConfig),
-		General: GeneralConfig{},
+		MCPServers:         make(map[string]MCPServerConfig),
+		RequiredMCPServers: make(map[string]RequiredMCPServerConfig),
+		General:            GeneralConfig{},
 		Output: OutputConfig{
 			Format: "text",
 		},
@@ -112,6 +146,8 @@ func Load() (*Config, error) {
 		}
 	}
 
+	applyRequiredMCPServers(cfg)
+
 	return cfg, nil
 }
 
@@ -121,6 +157,46 @@ func loadFile(path string, cfg *Config) error {
 		return err
 	}
 	return json.Unmarshal(data, cfg)
+}
+
+func applyRequiredMCPServers(cfg *Config) {
+	if len(cfg.RequiredMCPServers) == 0 {
+		return
+	}
+	if cfg.MCPServers == nil {
+		cfg.MCPServers = make(map[string]MCPServerConfig)
+	}
+
+	for name, server := range cfg.RequiredMCPServers {
+		includeTools := slices.Clone(server.IncludeTools)
+		if len(includeTools) > 0 {
+			slices.Sort(includeTools)
+		}
+		excludeTools := slices.Clone(server.ExcludeTools)
+		if len(excludeTools) > 0 {
+			slices.Sort(excludeTools)
+		}
+
+		trust := true
+		if server.Trust != nil {
+			trust = *server.Trust
+		}
+
+		cfg.MCPServers[name] = MCPServerConfig{
+			URL:                  server.URL,
+			Type:                 server.Type,
+			Headers:              server.Headers,
+			Timeout:              server.Timeout,
+			Trust:                trust,
+			Description:          server.Description,
+			IncludeTools:         includeTools,
+			ExcludeTools:         excludeTools,
+			AuthProviderType:     server.AuthProviderType,
+			OAuth:                server.OAuth,
+			TargetAudience:       server.TargetAudience,
+			TargetServiceAccount: server.TargetServiceAccount,
+		}
+	}
 }
 
 // CachedState represents cached state for geminimini

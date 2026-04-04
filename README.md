@@ -119,6 +119,11 @@ Configure in `~/.gemini/settings.json`:
 }
 ```
 
+`gmn` also understands newer Gemini CLI config fields such as
+`requiredMcpServers`. Required servers are merged into the effective MCP server
+set and override local servers with the same name, matching the upstream
+configuration model.
+
 ```bash
 # List available tools
 gmn mcp list
@@ -126,6 +131,10 @@ gmn mcp list
 # Call a tool
 gmn mcp call my-server tool-name arg=value
 ```
+
+Current limitation: `gmn mcp` executes stdio-based MCP servers. HTTP/SSE MCP
+server definitions are parsed and preserved for config compatibility, but direct
+HTTP/SSE transport execution is not implemented yet.
 
 ## 📊 Benchmarks
 

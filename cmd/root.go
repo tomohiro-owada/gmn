@@ -162,7 +162,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Resolve model alias to concrete model name
 	// Upstream ref: 61d92c4a2 - Remove previewFeatures and default to Gemini 3
-	resolvedModel := config.ResolveModel(model, false, true)
+	resolvedModel := config.ResolveModel(model, false, false, true)
 	if debug && resolvedModel != model {
 		fmt.Fprintf(os.Stderr, "Model resolved: %s → %s\n", model, resolvedModel)
 	}

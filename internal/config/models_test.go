@@ -4,11 +4,12 @@ import "testing"
 
 func TestResolveModel(t *testing.T) {
 	tests := []struct {
-		name              string
-		input             string
-		useGemini31       bool
-		hasAccessToPreview bool
-		want              string
+		name                 string
+		input                string
+		useGemini31          bool
+		useGemini31FlashLite bool
+		hasAccessToPreview   bool
+		want                 string
 	}{
 		// Alias resolution (Gemini 3 default, useGemini31=false, hasAccessToPreview=true)
 		{name: "pro alias → gemini-3-pro-preview", input: "pro", useGemini31: false, hasAccessToPreview: true, want: PreviewGeminiModel},
@@ -29,9 +30,13 @@ func TestResolveModel(t *testing.T) {
 		{name: "auto-gemini-3 with 3.1 → gemini-3.1-pro-preview", input: "auto-gemini-3", useGemini31: true, hasAccessToPreview: true, want: PreviewGemini31Model},
 		{name: "gemini-3-pro-preview with 3.1 → gemini-3.1-pro-preview", input: PreviewGeminiModel, useGemini31: true, hasAccessToPreview: true, want: PreviewGemini31Model},
 
-		// flash and flash-lite are not affected by useGemini31
+		// flash is not affected by useGemini31
 		{name: "flash alias with 3.1 still → gemini-3-flash-preview", input: "flash", useGemini31: true, hasAccessToPreview: true, want: PreviewGeminiFlashModel},
-		{name: "flash-lite alias with 3.1 still → gemini-2.5-flash-lite", input: "flash-lite", useGemini31: true, hasAccessToPreview: true, want: DefaultGeminiFlashLiteModel},
+
+		// flash-lite with useGemini31FlashLite flag (upstream: bbd8483e3)
+		{name: "flash-lite with 3.1FlashLite → gemini-3.1-flash-lite-preview", input: "flash-lite", useGemini31FlashLite: true, hasAccessToPreview: true, want: PreviewGemini31FlashLiteModel},
+		{name: "flash-lite without 3.1FlashLite → gemini-2.5-flash-lite", input: "flash-lite", useGemini31FlashLite: false, hasAccessToPreview: true, want: DefaultGeminiFlashLiteModel},
+		{name: "flash-lite with 3.1FlashLite but no preview → gemini-2.5-flash-lite", input: "flash-lite", useGemini31FlashLite: true, hasAccessToPreview: false, want: DefaultGeminiFlashLiteModel},
 
 		// Upstream ref: 22d962e76 - fallback to 2.5 when no preview access
 		{name: "pro fallback without preview → gemini-2.5-pro", input: "pro", useGemini31: false, hasAccessToPreview: false, want: DefaultGeminiModel},
@@ -43,9 +48,9 @@ func TestResolveModel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ResolveModel(tt.input, tt.useGemini31, tt.hasAccessToPreview)
+			got := ResolveModel(tt.input, tt.useGemini31, tt.useGemini31FlashLite, tt.hasAccessToPreview)
 			if got != tt.want {
-				t.Errorf("ResolveModel(%q, %v, %v) = %q, want %q", tt.input, tt.useGemini31, tt.hasAccessToPreview, got, tt.want)
+				t.Errorf("ResolveModel(%q, %v, %v, %v) = %q, want %q", tt.input, tt.useGemini31, tt.useGemini31FlashLite, tt.hasAccessToPreview, got, tt.want)
 			}
 		})
 	}

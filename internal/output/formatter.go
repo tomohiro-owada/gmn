@@ -21,15 +21,20 @@ type Formatter interface {
 	WriteToolResult(name string, result map[string]interface{}, isError bool) error
 }
 
-// NewFormatter creates a formatter for the given format
-func NewFormatter(format string, w io.Writer, errW io.Writer, sanitize bool) (Formatter, error) {
+// NewFormatter creates a formatter for the given format.
+// fields optionally restricts JSON output to the named top-level keys.
+func NewFormatter(format string, w io.Writer, errW io.Writer, sanitize bool, fields []string) (Formatter, error) {
+	fieldSet := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		fieldSet[f] = true
+	}
 	switch format {
 	case "text":
 		return &TextFormatter{w: w, errW: errW, sanitize: sanitize}, nil
 	case "json":
-		return &JSONFormatter{w: w, errW: errW, sanitize: sanitize}, nil
+		return &JSONFormatter{w: w, errW: errW, sanitize: sanitize, fields: fieldSet}, nil
 	case "stream-json":
-		return &StreamJSONFormatter{w: w, errW: errW, sanitize: sanitize}, nil
+		return &StreamJSONFormatter{w: w, errW: errW, sanitize: sanitize, fields: fieldSet}, nil
 	default:
 		return nil, fmt.Errorf("unknown output format: %s", format)
 	}
@@ -98,6 +103,7 @@ type JSONFormatter struct {
 	w        io.Writer
 	errW     io.Writer
 	sanitize bool
+	fields   map[string]bool
 }
 
 // JSONResponse is the JSON output structure
@@ -131,7 +137,25 @@ func (f *JSONFormatter) WriteResponse(resp *api.GenerateResponse) error {
 
 	enc := json.NewEncoder(f.w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+	if len(f.fields) == 0 {
+		return enc.Encode(out)
+	}
+	// Apply field filter
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return err
+	}
+	filtered := make(map[string]json.RawMessage, len(f.fields))
+	for k, v := range m {
+		if f.fields[k] {
+			filtered[k] = v
+		}
+	}
+	return enc.Encode(filtered)
 }
 
 func (f *JSONFormatter) WriteStreamEvent(event *api.StreamEvent) error {
@@ -161,6 +185,7 @@ type StreamJSONFormatter struct {
 	w        io.Writer
 	errW     io.Writer
 	sanitize bool
+	fields   map[string]bool
 }
 
 func (f *StreamJSONFormatter) WriteResponse(resp *api.GenerateResponse) error {
@@ -173,7 +198,34 @@ func (f *StreamJSONFormatter) WriteStreamEvent(event *api.StreamEvent) error {
 	if e.Text != "" {
 		e.Text = sanitizeText(e.Text, f.sanitize)
 	}
-	data, err := json.Marshal(e)
+	if len(f.fields) == 0 {
+		data, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		_, err = f.w.Write(append(data, '\n'))
+		return err
+	}
+	// Apply field filter
+	raw, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return err
+	}
+	filtered := make(map[string]json.RawMessage, len(f.fields)+1)
+	// always include "type" so consumers can distinguish events
+	if v, ok := m["type"]; ok {
+		filtered["type"] = v
+	}
+	for k, v := range m {
+		if f.fields[k] {
+			filtered[k] = v
+		}
+	}
+	data, err := json.Marshal(filtered)
 	if err != nil {
 		return err
 	}

@@ -41,6 +41,8 @@ var (
 	yolo                bool
 	sandbox             bool
 	noAgent             bool
+	inputJSON           string
+	fields              []string
 )
 
 var rootCmd = &cobra.Command{
@@ -74,6 +76,10 @@ func init() {
 	rootCmd.Flags().BoolVar(&yolo, "yolo", false, "Auto-approve shell commands (no confirmation)")
 	rootCmd.Flags().BoolVar(&sandbox, "sandbox", false, "Restrict file writes to working directory")
 	rootCmd.Flags().BoolVar(&noAgent, "no-agent", false, "Disable agent mode (single-turn, no tools)")
+	rootCmd.Flags().StringVar(&inputJSON, "input-json", "", "Structured JSON input (e.g. {\"prompt\":\"...\",\"model\":\"...\",\"files\":[...]})")
+	rootCmd.Flags().StringArrayVar(&fields, "fields", nil, "Filter JSON output fields (e.g. --fields response,usage)")
+
+	rootCmd.AddCommand(schemaCmd)
 }
 
 // Execute runs the root command
@@ -92,6 +98,48 @@ func run(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		prompt_ = args[0]
 	}
+
+	// Parse --input-json and apply to flags (CLI flags take precedence)
+	if inputJSON != "" {
+		var parsed struct {
+			Prompt   string   `json:"prompt"`
+			Model    string   `json:"model"`
+			Files    []string `json:"files"`
+			MaxTurns int      `json:"max-turns"`
+			Yolo     *bool    `json:"yolo"`
+			NoAgent  *bool    `json:"no-agent"`
+		}
+		if err := json.Unmarshal([]byte(inputJSON), &parsed); err != nil {
+			return fmt.Errorf("invalid --input-json: %w", err)
+		}
+		if prompt_ == "" && parsed.Prompt != "" {
+			prompt_ = parsed.Prompt
+		}
+		if !cmd.Flags().Changed("model") && parsed.Model != "" {
+			model = parsed.Model
+		}
+		if !cmd.Flags().Changed("file") && len(parsed.Files) > 0 {
+			files = parsed.Files
+		}
+		if !cmd.Flags().Changed("max-turns") && parsed.MaxTurns > 0 {
+			maxTurns = parsed.MaxTurns
+		}
+		if !cmd.Flags().Changed("yolo") && parsed.Yolo != nil {
+			yolo = *parsed.Yolo
+		}
+		if !cmd.Flags().Changed("no-agent") && parsed.NoAgent != nil {
+			noAgent = *parsed.NoAgent
+		}
+	}
+
+	// TTY auto-detection: default to stream-json when stdout is not a terminal
+	if !cmd.Flags().Changed("output-format") {
+		fi, err := os.Stdout.Stat()
+		if err == nil && (fi.Mode()&os.ModeCharDevice) == 0 {
+			outputFormat = "stream-json"
+		}
+	}
+
 	// Setup context with timeout and signal handling
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -110,7 +158,7 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create formatter
-	formatter, err := output.NewFormatter(outputFormat, os.Stdout, os.Stderr, sanitize)
+	formatter, err := output.NewFormatter(outputFormat, os.Stdout, os.Stderr, sanitize, fields)
 	if err != nil {
 		return err
 	}

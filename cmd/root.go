@@ -250,7 +250,7 @@ func run(cmd *cobra.Command, args []string) error {
 			Config: api.GenerationConfig{
 				Temperature:     1.0,
 				TopP:            0.95,
-				MaxOutputTokens: 65536,
+				MaxOutputTokens: 65535,
 			},
 		},
 	}

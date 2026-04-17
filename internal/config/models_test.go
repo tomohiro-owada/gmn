@@ -172,3 +172,29 @@ func TestIsAutoModel(t *testing.T) {
 		})
 	}
 }
+
+func TestFallbackModel(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+		want  string
+	}{
+		{"pro falls back to flash", DefaultGeminiModel, DefaultGeminiFlashModel},
+		{"preview pro falls back to flash", PreviewGeminiModel, DefaultGeminiFlashModel},
+		{"3.1 pro falls back to flash", PreviewGemini31Model, DefaultGeminiFlashModel},
+		{"flash falls back to flash-lite", DefaultGeminiFlashModel, DefaultGeminiFlashLiteModel},
+		{"preview flash falls back to flash-lite", PreviewGeminiFlashModel, DefaultGeminiFlashLiteModel},
+		{"flash-lite has no fallback", DefaultGeminiFlashLiteModel, ""},
+		{"preview flash-lite has no fallback", PreviewGemini31FlashLiteModel, ""},
+		{"unknown model falls back to flash", "custom-model", DefaultGeminiFlashModel},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FallbackModel(tt.model)
+			if got != tt.want {
+				t.Errorf("FallbackModel(%q) = %q, want %q", tt.model, got, tt.want)
+			}
+		})
+	}
+}

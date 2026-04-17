@@ -7,8 +7,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/tomohiro-owada/gmn/internal/api"
+	"github.com/tomohiro-owada/gmn/internal/config"
 	"github.com/tomohiro-owada/gmn/internal/mcp"
 	"github.com/tomohiro-owada/gmn/internal/output"
 	"github.com/tomohiro-owada/gmn/internal/tools"
@@ -35,6 +37,7 @@ type Loop struct {
 	mcpClients MCPClients
 	formatter  output.Formatter
 	config     Config
+	inPlanMode bool
 }
 
 // NewLoop creates a new agent loop.
@@ -96,6 +99,15 @@ func (l *Loop) Run(ctx context.Context, req *api.GenerateRequest) error {
 				fmt.Fprintf(os.Stderr, "[agent] calling tool: %s\n", fc.Name)
 			}
 
+			// Track plan mode state
+			// Upstream ref: 050c303 - silent fallback for Plan Mode (v0.38.1)
+			switch fc.Name {
+			case "enter_plan_mode":
+				l.inPlanMode = true
+			case "exit_plan_mode":
+				l.inPlanMode = false
+			}
+
 			// Write tool call to formatter
 			l.formatter.WriteToolCall(fc.Name, fc.Args)
 
@@ -137,11 +149,37 @@ func (l *Loop) Run(ctx context.Context, req *api.GenerateRequest) error {
 
 // callModel calls the API and returns the model's response parts.
 // For streaming mode, text is written to the formatter in real-time.
+// When in plan mode, model failures trigger silent fallback to the next
+// available model in the chain (pro → flash → flash-lite).
+// Upstream ref: 050c303 - silent fallback for Plan Mode model routing (v0.38.1)
 func (l *Loop) callModel(ctx context.Context, req *api.GenerateRequest) ([]api.Part, error) {
+	var parts []api.Part
+	var err error
 	if l.config.Streaming {
-		return l.callModelStreaming(ctx, req)
+		parts, err = l.callModelStreaming(ctx, req)
+	} else {
+		parts, err = l.callModelNonStreaming(ctx, req)
 	}
-	return l.callModelNonStreaming(ctx, req)
+
+	if err != nil && l.inPlanMode && isModelUnavailableError(err) {
+		fallback := config.FallbackModel(req.Model)
+		if fallback != "" {
+			if l.config.Debug {
+				fmt.Fprintf(os.Stderr, "[agent] plan mode: model %s unavailable, falling back to %s\n", req.Model, fallback)
+			}
+			origModel := req.Model
+			req.Model = fallback
+			if l.config.Streaming {
+				parts, err = l.callModelStreaming(ctx, req)
+			} else {
+				parts, err = l.callModelNonStreaming(ctx, req)
+			}
+			if err != nil {
+				req.Model = origModel
+			}
+		}
+	}
+	return parts, err
 }
 
 func (l *Loop) callModelStreaming(ctx context.Context, req *api.GenerateRequest) ([]api.Part, error) {
@@ -285,5 +323,21 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// isModelUnavailableError returns true if the error indicates a model is
+// unavailable (not found, no access, capacity issue).
+// Upstream ref: 050c303 - silent fallback for Plan Mode (v0.38.1)
+func isModelUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "status 404") ||
+		strings.Contains(msg, "status 403") ||
+		strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "model") && strings.Contains(msg, "unavailable") ||
+		strings.Contains(msg, "does not exist") ||
+		strings.Contains(msg, "no access")
 }
 

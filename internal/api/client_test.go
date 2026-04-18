@@ -242,6 +242,9 @@ func TestIsTransientTLSError(t *testing.T) {
 		{name: "connection reset", err: fmt.Errorf("connection reset by peer"), want: true},
 		{name: "EOF", err: fmt.Errorf("unexpected EOF"), want: true},
 		{name: "normal error", err: fmt.Errorf("dns lookup failed"), want: false},
+		// Upstream ref: 06e7621 - retry additional OpenSSL 3.x BAD_RECORD_MAC errors
+		{name: "bad record MAC", err: fmt.Errorf("remote error: bad record MAC"), want: true},
+		{name: "bad record MAC uppercase", err: fmt.Errorf("BAD_RECORD_MAC"), want: true},
 	}
 
 	for _, tt := range tests {
@@ -251,6 +254,46 @@ func TestIsTransientTLSError(t *testing.T) {
 				t.Errorf("isTransientTLSError(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestValidateBaseURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{name: "valid HTTPS", url: "https://api.example.com", wantErr: false},
+		{name: "localhost HTTP", url: "http://localhost:8080", wantErr: false},
+		{name: "127.0.0.1 HTTP", url: "http://127.0.0.1:8080", wantErr: false},
+		{name: "IPv6 localhost HTTP", url: "http://[::1]:8080", wantErr: false},
+		{name: "non-local HTTP", url: "http://api.example.com", wantErr: true},
+		{name: "invalid URL", url: "://bad", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateBaseURL(tt.url)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateBaseURL(%q) error = %v, wantErr %v", tt.url, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestNewClient_BaseURLFromEnv(t *testing.T) {
+	t.Setenv("GOOGLE_GEMINI_BASE_URL", "https://custom.example.com")
+	c := NewClient(http.DefaultClient, "test")
+	if c.baseURL != "https://custom.example.com" {
+		t.Errorf("baseURL = %q, want %q", c.baseURL, "https://custom.example.com")
+	}
+}
+
+func TestNewClient_BaseURLFromEnv_Invalid(t *testing.T) {
+	t.Setenv("GOOGLE_GEMINI_BASE_URL", "http://remote.example.com")
+	c := NewClient(http.DefaultClient, "test")
+	if c.baseURL != baseURL {
+		t.Errorf("baseURL = %q, want default %q (invalid URL should be ignored)", c.baseURL, baseURL)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -55,6 +56,13 @@ type jsonRPCResponse struct {
 type jsonRPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+// Upstream ref: 212edf3 - check MCP error code over brittle string match
+const jsonRPCMethodNotFound = -32601
+
+func isMethodNotFoundError(err *jsonRPCError) bool {
+	return err != nil && err.Code == jsonRPCMethodNotFound
 }
 
 // NewClient creates a new MCP client
@@ -137,8 +145,13 @@ func (c *Client) Initialize(ctx context.Context) error {
 	}
 
 	// List tools
+	// Upstream ref: 212edf3 - gracefully handle servers that don't support tools/list
 	toolsResult, err := c.call(ctx, "tools/list", nil)
 	if err != nil {
+		if rpcErr := extractRPCError(err); isMethodNotFoundError(rpcErr) {
+			c.Tools = nil
+			return nil
+		}
 		return fmt.Errorf("tools/list failed: %w", err)
 	}
 
@@ -240,10 +253,27 @@ func (c *Client) call(ctx context.Context, method string, params interface{}) (j
 	}
 
 	if resp.Error != nil {
-		return nil, fmt.Errorf("RPC error %d: %s", resp.Error.Code, resp.Error.Message)
+		return nil, &rpcError{code: resp.Error.Code, message: resp.Error.Message}
 	}
 
 	return resp.Result, nil
+}
+
+type rpcError struct {
+	code    int
+	message string
+}
+
+func (e *rpcError) Error() string {
+	return fmt.Sprintf("RPC error %d: %s", e.code, e.message)
+}
+
+func extractRPCError(err error) *jsonRPCError {
+	var re *rpcError
+	if errors.As(err, &re) {
+		return &jsonRPCError{Code: re.code, Message: re.message}
+	}
+	return nil
 }
 
 func (c *Client) notify(method string, params interface{}) error {

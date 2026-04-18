@@ -14,6 +14,8 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,6 +35,30 @@ type Client struct {
 	userAgent  string
 }
 
+// Upstream ref: cb289e0 - honor GOOGLE_GEMINI_BASE_URL
+var localHostnames = []string{"localhost", "127.0.0.1", "::1"}
+
+func validateBaseURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("invalid custom base URL: %s", rawURL)
+	}
+	if u.Scheme != "https" {
+		hostname := u.Hostname()
+		isLocal := false
+		for _, h := range localHostnames {
+			if hostname == h {
+				isLocal = true
+				break
+			}
+		}
+		if !isLocal {
+			return fmt.Errorf("custom base URL must use HTTPS unless it is localhost")
+		}
+	}
+	return nil
+}
+
 // NewClient creates a new API client.
 // The version parameter is used for the User-Agent header.
 // Upstream ref: 8979fc5f6 - propagate User-Agent header to setup-phase CodeAssist API calls
@@ -41,9 +67,18 @@ func NewClient(httpClient *http.Client, version string) *Client {
 	if version != "" {
 		ua = "gemini-cli/gmn-" + version
 	}
+
+	// Upstream ref: cb289e0 - honor GOOGLE_GEMINI_BASE_URL
+	base := baseURL
+	if envURL := os.Getenv("GOOGLE_GEMINI_BASE_URL"); envURL != "" {
+		if err := validateBaseURL(envURL); err == nil {
+			base = envURL
+		}
+	}
+
 	return &Client{
 		httpClient: httpClient,
-		baseURL:    baseURL,
+		baseURL:    base,
 		userAgent:  ua,
 	}
 }
@@ -127,6 +162,9 @@ func (c *Client) doRequestWithRetry(ctx context.Context, httpReq *http.Request, 
 	return nil, fmt.Errorf("rate limited after %d retries: %w", maxRetries, lastErr)
 }
 
+// Upstream ref: 06e7621 - retry additional OpenSSL 3.x SSL errors during streaming
+var badRecordMACPattern = regexp.MustCompile(`(?i)bad.record.mac`)
+
 // isTransientTLSError checks if the error is a transient TLS error that may
 // succeed on retry (e.g. handshake failures due to network issues).
 func isTransientTLSError(err error) bool {
@@ -140,7 +178,8 @@ func isTransientTLSError(err error) bool {
 	errStr := err.Error()
 	return strings.Contains(errStr, "tls:") ||
 		strings.Contains(errStr, "connection reset") ||
-		strings.Contains(errStr, "EOF")
+		strings.Contains(errStr, "EOF") ||
+		badRecordMACPattern.MatchString(errStr)
 }
 
 // sanitizeJSON collapses duplicate commas that can appear when SSE stream

@@ -1,5 +1,5 @@
 // Package config provides model constants and resolution logic.
-// Ported from upstream packages/core/src/config/models.ts (v0.37.1)
+// Ported from upstream packages/core/src/config/models.ts (v0.38.1)
 // Copyright 2025 Google LLC
 // Copyright 2025 Tomohiro Owada
 // SPDX-License-Identifier: Apache-2.0
@@ -7,7 +7,7 @@ package config
 
 import "strings"
 
-// Model constants matching upstream Gemini CLI v0.37.1
+// Model constants matching upstream Gemini CLI v0.38.1
 const (
 	PreviewGeminiModel              = "gemini-3-pro-preview"
 	PreviewGemini31Model            = "gemini-3.1-pro-preview"
@@ -128,4 +128,20 @@ func IsAutoModel(model string) bool {
 	return model == GeminiModelAliasAuto ||
 		model == PreviewGeminiModelAuto ||
 		model == DefaultGeminiModelAuto
+}
+
+// FallbackModel returns the next model to try when the given model is unavailable.
+// Returns empty string when no further fallback is available.
+// Upstream ref: 050c303 - silent fallback for Plan Mode model routing (v0.38.1)
+func FallbackModel(model string) string {
+	switch {
+	case IsProModel(model):
+		return DefaultGeminiFlashModel
+	case strings.Contains(strings.ToLower(model), "flash-lite"):
+		return ""
+	case strings.Contains(strings.ToLower(model), "flash"):
+		return DefaultGeminiFlashLiteModel
+	default:
+		return DefaultGeminiFlashModel
+	}
 }

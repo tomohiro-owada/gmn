@@ -7,9 +7,11 @@ package config
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 )
 
 const (
@@ -229,7 +231,8 @@ func LoadCachedState() (*CachedState, error) {
 	return &state, nil
 }
 
-// SaveCachedState saves the cached state to gmn_state.json
+// SaveCachedState saves the cached state to gmn_state.json with retry logic.
+// Upstream ref: 8379099e - add exponential backoff for transient file operation failures
 func SaveCachedState(state *CachedState) error {
 	geminiPath, err := GeminiDir()
 	if err != nil {
@@ -242,5 +245,55 @@ func SaveCachedState(state *CachedState) error {
 		return err
 	}
 
+	tmpPath := path + ".tmp"
+
+	const maxRetries = 5
+	const baseDelay = 50 * time.Millisecond
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+			if isTransientFileError(err) && attempt < maxRetries {
+				time.Sleep(time.Duration(math.Pow(2, float64(attempt))) * baseDelay)
+				continue
+			}
+			return err
+		}
+
+		if err := os.Rename(tmpPath, path); err != nil {
+			os.Remove(tmpPath)
+			if isTransientFileError(err) && attempt < maxRetries {
+				time.Sleep(time.Duration(math.Pow(2, float64(attempt))) * baseDelay)
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+
 	return os.WriteFile(path, data, 0600)
+}
+
+func isTransientFileError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if os.IsPermission(err) {
+		return false
+	}
+	msg := err.Error()
+	for _, s := range []string{"device or resource busy", "resource temporarily unavailable"} {
+		if len(msg) >= len(s) && containsLower(msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsLower(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

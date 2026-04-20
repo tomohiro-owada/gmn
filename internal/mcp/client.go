@@ -16,6 +16,15 @@ import (
 	"sync/atomic"
 )
 
+// Resource represents an MCP resource exposed by a server.
+// Upstream ref: f16f1cce - add tools to list and read MCP resources
+type Resource struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+}
+
 // Client is an MCP client using stdio transport
 type Client struct {
 	cmd       *exec.Cmd
@@ -29,6 +38,7 @@ type Client struct {
 	ServerName    string
 	ServerVersion string
 	Tools         []Tool
+	Resources     []Resource
 }
 
 // Tool represents an MCP tool
@@ -164,6 +174,29 @@ func (c *Client) Initialize(ctx context.Context) error {
 
 	c.Tools = toolsResp.Tools
 
+	// Discover resources
+	// Upstream ref: f16f1cce - add tools to list and read MCP resources
+	resourcesResult, err := c.call(ctx, "resources/list", nil)
+	if err != nil {
+		if rpcErr := extractRPCError(err); isMethodNotFoundError(rpcErr) {
+			c.Resources = nil
+			return nil
+		}
+		// Non-fatal: some servers don't support resources
+		c.Resources = nil
+		return nil
+	}
+
+	var resourcesResp struct {
+		Resources []Resource `json:"resources"`
+	}
+	if err := json.Unmarshal(resourcesResult, &resourcesResp); err != nil {
+		c.Resources = nil
+		return nil
+	}
+
+	c.Resources = resourcesResp.Resources
+
 	return nil
 }
 
@@ -203,6 +236,43 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]inte
 	for _, content := range callResult.Content {
 		if content.Type == "text" {
 			text += content.Text
+		}
+	}
+
+	return text, nil
+}
+
+// ReadResource reads a resource from the MCP server by URI.
+// Upstream ref: f16f1cce - add tools to list and read MCP resources
+func (c *Client) ReadResource(ctx context.Context, uri string) (string, error) {
+	params := map[string]interface{}{
+		"uri": uri,
+	}
+
+	result, err := c.call(ctx, "resources/read", params)
+	if err != nil {
+		return "", err
+	}
+
+	var readResult struct {
+		Contents []struct {
+			URI      string `json:"uri"`
+			Text     string `json:"text,omitempty"`
+			Blob     string `json:"blob,omitempty"`
+			MimeType string `json:"mimeType,omitempty"`
+		} `json:"contents"`
+	}
+
+	if err := json.Unmarshal(result, &readResult); err != nil {
+		return "", fmt.Errorf("failed to parse resource result: %w", err)
+	}
+
+	var text string
+	for _, content := range readResult.Contents {
+		if content.Text != "" {
+			text += content.Text + "\n"
+		} else if content.Blob != "" {
+			text += fmt.Sprintf("[Binary Data (%s)]\n", content.MimeType)
 		}
 	}
 

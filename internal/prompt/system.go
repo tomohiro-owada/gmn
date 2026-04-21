@@ -99,6 +99,11 @@ Use 'read_file' to understand context and validate any assumptions you may have.
 5. **Verify (Standards):** VERY IMPORTANT: After making code changes, execute the project-specific build, linting and type-checking commands (e.g., 'tsc', 'npm run lint', 'ruff check .') that you have identified for this project (or obtained from the user). This ensures code quality and adherence to standards.
 6. **Finalize:** After all verification passes, consider the task complete. Do not remove or revert any changes or created files (like tests). Await the user's next instruction.
 
+**Strategic Re-evaluation:** If you have attempted to fix a failing implementation more than 3 times without success, you must:
+1. Stop and remind yourself of the original task description.
+2. List your current assumptions and identify which ones might be wrong.
+3. Propose a different architectural approach rather than continuing to patch the current one.
+
 ## New Applications
 
 **Goal:** Autonomously implement and deliver a visually appealing, substantially complete, and functional prototype. Utilize all tools at your disposal to implement the application. Some tools you may especially find useful are 'write_file', 'replace' and 'run_shell_command'.

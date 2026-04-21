@@ -209,6 +209,83 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]inte
 	return text, nil
 }
 
+// Resource represents an MCP resource
+type Resource struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	MIMEType    string `json:"mimeType,omitempty"`
+}
+
+// ListResources lists available resources from the MCP server.
+// Upstream ref: f16f1cc - add tools to list and read MCP resources
+func (c *Client) ListResources(ctx context.Context) ([]Resource, error) {
+	var allResources []Resource
+	var cursor *string
+
+	for {
+		params := map[string]interface{}{}
+		if cursor != nil {
+			params["cursor"] = *cursor
+		}
+
+		result, err := c.call(ctx, "resources/list", params)
+		if err != nil {
+			if rpcErr := extractRPCError(err); isMethodNotFoundError(rpcErr) {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("resources/list failed: %w", err)
+		}
+
+		var resp struct {
+			Resources  []Resource `json:"resources"`
+			NextCursor string     `json:"nextCursor,omitempty"`
+		}
+		if err := json.Unmarshal(result, &resp); err != nil {
+			return nil, fmt.Errorf("failed to parse resources: %w", err)
+		}
+
+		allResources = append(allResources, resp.Resources...)
+
+		if resp.NextCursor == "" {
+			break
+		}
+		cursor = &resp.NextCursor
+	}
+
+	return allResources, nil
+}
+
+// ReadResource reads the content of a specific MCP resource by URI.
+// Upstream ref: f16f1cc - add tools to list and read MCP resources
+func (c *Client) ReadResource(ctx context.Context, uri string) (string, error) {
+	params := map[string]interface{}{
+		"uri": uri,
+	}
+
+	result, err := c.call(ctx, "resources/read", params)
+	if err != nil {
+		return "", fmt.Errorf("resources/read failed: %w", err)
+	}
+
+	var resp struct {
+		Contents []struct {
+			URI      string `json:"uri"`
+			MIMEType string `json:"mimeType,omitempty"`
+			Text     string `json:"text,omitempty"`
+		} `json:"contents"`
+	}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return "", fmt.Errorf("failed to parse resource content: %w", err)
+	}
+
+	var text string
+	for _, content := range resp.Contents {
+		text += content.Text
+	}
+	return text, nil
+}
+
 // Close shuts down the MCP client
 func (c *Client) Close() error {
 	c.stdin.Close()

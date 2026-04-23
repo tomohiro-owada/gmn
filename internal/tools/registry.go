@@ -35,11 +35,13 @@ type WebSource struct {
 
 // RegistryOptions configures tool behavior.
 type RegistryOptions struct {
-	WorkDir     string
-	AutoApprove bool
-	Sandbox     bool
-	Debug       bool
-	WebSearch   WebSearchFunc
+	WorkDir          string
+	AutoApprove      bool
+	Sandbox          bool
+	Debug            bool
+	WebSearch        WebSearchFunc
+	ListMCPResources ListMCPResourcesFunc
+	ReadMCPResource  ReadMCPResourceFunc
 }
 
 // MCPToolRef tracks which MCP server owns a tool.
@@ -84,6 +86,8 @@ func (r *Registry) registerBuiltins(opts RegistryOptions) {
 		NewExitPlanModeTool(opts),
 		NewActivateSkillTool(opts),
 		NewInternalDocsTool(opts),
+		NewListMCPResourcesTool(opts),
+		NewReadMCPResourceTool(opts),
 	}
 	for _, t := range tools {
 		r.builtins[t.Name()] = t

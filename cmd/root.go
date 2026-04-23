@@ -354,17 +354,41 @@ func run(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		// Initialize MCP clients map before registry (closures capture reference)
+		mcpClients := make(agent.MCPClients)
+
 		// Create tool registry
+		// Upstream ref: f16f1cce - add MCP resource listing and reading tools
 		registry := tools.NewRegistry(tools.RegistryOptions{
 			WorkDir:     workDir,
 			AutoApprove: yolo,
 			Sandbox:     sandbox,
 			Debug:       debug,
 			WebSearch:   webSearchFn,
+			ListMCPResources: func() []tools.MCPResourceInfo {
+				var resources []tools.MCPResourceInfo
+				for serverName, client := range mcpClients {
+					for _, r := range client.Resources {
+						resources = append(resources, tools.MCPResourceInfo{
+							ServerName:  serverName,
+							URI:         r.URI,
+							Name:        r.Name,
+							Description: r.Description,
+						})
+					}
+				}
+				return resources
+			},
+			ReadMCPResource: func(ctx context.Context, serverName, uri string) (string, error) {
+				client, ok := mcpClients[serverName]
+				if !ok {
+					return "", fmt.Errorf("MCP server %q not connected", serverName)
+				}
+				return client.ReadResource(ctx, uri)
+			},
 		})
 
 		// Initialize MCP clients and register tools
-		mcpClients := make(agent.MCPClients)
 		var mcpDecls []api.FunctionDecl
 
 		if cfg != nil {

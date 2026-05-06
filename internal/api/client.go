@@ -519,6 +519,20 @@ func (c *Client) LoadCodeAssist(ctx context.Context) (*LoadCodeAssistResponse, e
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
+		// Upstream ref: 820a4e3c9 - better error message for failed cloudshell-gca auth (#26079)
+		// In Cloud Shell, GOOGLE_CLOUD_PROJECT may be "cloudshell-gca" which lacks Gemini access.
+		if resp.StatusCode == http.StatusForbidden {
+			proj := os.Getenv("GOOGLE_CLOUD_PROJECT")
+			if proj == "" {
+				proj = req.CloudAICompanionProject
+			}
+			if proj == "cloudshell-gca" || proj == "" {
+				return nil, fmt.Errorf("access to the Gemini API was denied (403).\n" +
+					"If you are in Cloud Shell, please set your own Google Cloud project:\n" +
+					"  gcloud config set project [PROJECT_ID]\n" +
+					"or export GOOGLE_CLOUD_PROJECT=[PROJECT_ID]")
+			}
+		}
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(bodyBytes))
 	}
 

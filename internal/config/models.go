@@ -1,5 +1,5 @@
 // Package config provides model constants and resolution logic.
-// Ported from upstream packages/core/src/config/models.ts (v0.38.1)
+// Ported from upstream packages/core/src/config/models.ts (v0.41.2)
 // Copyright 2025 Google LLC
 // Copyright 2025 Tomohiro Owada
 // SPDX-License-Identifier: Apache-2.0
@@ -7,7 +7,7 @@ package config
 
 import "strings"
 
-// Model constants matching upstream Gemini CLI v0.38.1
+// Model constants matching upstream Gemini CLI v0.41.2
 const (
 	PreviewGeminiModel              = "gemini-3-pro-preview"
 	PreviewGemini31Model            = "gemini-3.1-pro-preview"
@@ -17,6 +17,11 @@ const (
 	DefaultGeminiModel              = "gemini-2.5-pro"
 	DefaultGeminiFlashModel         = "gemini-2.5-flash"
 	DefaultGeminiFlashLiteModel     = "gemini-2.5-flash-lite"
+
+	// Gemma 4 experimental models
+	// Upstream ref: d4c5333dc - feat(core,cli): add support for Gemma 4 models (experimental) (#25604)
+	Gemma431BItModel    = "gemma-4-31b-it"
+	Gemma426BA4BItModel = "gemma-4-26b-a4b-it"
 
 	// Auto model aliases
 	PreviewGeminiModelAuto  = "auto-gemini-3"
@@ -37,6 +42,9 @@ var ValidGeminiModels = map[string]bool{
 	DefaultGeminiModel:              true,
 	DefaultGeminiFlashModel:         true,
 	DefaultGeminiFlashLiteModel:     true,
+	// Gemma 4 experimental models (upstream ref: d4c5333dc)
+	Gemma431BItModel:    true,
+	Gemma426BA4BItModel: true,
 }
 
 // ResolveModel resolves a model alias to a concrete model name.
